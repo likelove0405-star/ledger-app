@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>家庭記帳</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="家庭記帳">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0d0d0d">
+<meta name="referrer" content="no-referrer">
+<style>
+  /* 這一頁只是外框：把 Google Apps Script 的記帳 App 全螢幕嵌進來，
+     這樣上方就不會有 Google 的提示列，狀態列也會跟 App 一樣是深色。
+     網址和金鑰都不寫在這裡，放在主畫面捷徑網址 # 後面（不會傳到伺服器）。 */
+  html, body { margin: 0; height: 100%; background: #0d0d0d; color: #a09f96; overflow: hidden; }
+  html.light, html.light body { background: #f4f5f7; color: #6f6e68; }
+  #probe { position: fixed; visibility: hidden; padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
+  #app { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; opacity: 0; transition: opacity .2s; }
+  #app.ready { opacity: 1; }
+  #msg { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; padding: 24px; text-align: center; font: 16px/1.5 -apple-system, "PingFang TC", sans-serif; }
+</style>
+</head>
+<body>
+<div id="probe"></div>
+<div id="msg">載入中…</div>
+<script>
+(function () {
+  var STORE = 'ledger-link';
+  var msg = document.getElementById('msg');
+  var probe = document.getElementById('probe');
+
+  function store(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* 存不了就算了 */ } }
+  function load(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+
+  if (load('ledger-theme') === 'light') document.documentElement.classList.add('light');
+
+  // 連結格式：#s=部署代碼&k=個人金鑰。主畫面捷徑萬一沒保留 # 後面，就用上次記住的。
+  var params = new URLSearchParams(location.hash.slice(1) || location.search.slice(1));
+  var s = params.get('s'), k = params.get('k');
+  var ok = /^[\w-]{20,200}$/;
+  if (ok.test(s || '') && ok.test(k || '')) store(STORE, 's=' + s + '&k=' + k);
+  else {
+    var saved = new URLSearchParams(load(STORE) || '');
+    s = saved.get('s'); k = saved.get('k');
+  }
+  if (!ok.test(s || '') || !ok.test(k || '')) {
+    msg.textContent = '這個連結少了個人金鑰，請用完整的專屬連結重新打開。';
+    return;
+  }
+
+  var frame = document.createElement('iframe');
+  frame.id = 'app';
+  frame.title = '家庭記帳';
+  frame.allow = 'clipboard-write';
+  // 不帶 Google 登入狀態載入：瀏覽器同時登入多個 Google 帳號時，嵌入的 Apps Script 會顯示「無法開啟這個檔案」。
+  // App 是用個人金鑰辨識身分，本來就不需要登入。
+  frame.setAttribute('credentialless', '');
+  var appWindow = null;
+
+  function insets() {
+    var cs = getComputedStyle(probe);
+    return { type: 'ledger-insets', top: parseFloat(cs.paddingTop) || 0, bottom: parseFloat(cs.paddingBottom) || 0 };
+  }
+  function show() { frame.classList.add('ready'); msg.style.display = 'none'; }
+
+  window.addEventListener('message', function (e) {
+    var d = e.data;
+    if (!d || d.type !== 'ledger-hello' || !/^https:\/\/[\w-]+\.googleusercontent\.com$/.test(e.origin)) return;
+    appWindow = e.source;
+    appWindow.postMessage(insets(), e.origin);
+    if (d.theme === 'light' || d.theme === 'dark') {
+      store('ledger-theme', d.theme);
+      document.documentElement.classList.toggle('light', d.theme === 'light');
+    }
+    show();
+  });
+  window.addEventListener('resize', function () { if (appWindow) appWindow.postMessage(insets(), '*'); });
+  // App 太久沒回應（例如舊版）也還是顯示出來，不要一直卡在載入中。
+  frame.addEventListener('load', function () { setTimeout(show, 4000); });
+
+  frame.src = 'https://script.google.com/macros/s/' + s + '/exec?k=' + encodeURIComponent(k);
+  document.body.appendChild(frame);
+})();
+</script>
+</body>
+</html>
